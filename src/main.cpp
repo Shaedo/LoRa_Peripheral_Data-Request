@@ -31,11 +31,9 @@
 
   // Flag for current LoRa cycle - loops around from MIN_CURRENT_CYCLE to 255 
   // Prevents relays from doubling up on requests etc. This step is not neccesarry for simple systems (no relays, no cross transmissions), but has low overhead
-  uint8_t currentCycle_g = 99;
+  uint8_t currentLoRaCycle_g = 50;
 
-  uint8_t rssi_g= 0; // Recived Signal Strength Indication (how strong is the LoRa signal being recieved)
-
-  uint8_t PeripheralID_g;
+  uint8_t PeripheralID_g = 0;
 
 /******* INSTANTIATED CLASS OBJECTS ***********/
   SX1262 radio = new Module(LoRa_NSS, LoRa_DIO1, LoRa_NRST, LoRa_BUSY); // see lora_config.h
@@ -92,29 +90,38 @@
     int SX1262state = radio.receive(loraData, LoRa_BUFFER);
 
     if (SX1262state == RADIOLIB_ERR_NONE) {// packet was successfully received
-      #if REPORTING_MODE > 0 
-          Serial.print("PROCESSING Rx: ");
-          for(byte i=0;i<LoRa_BUFFER;i++){
-            Serial.print(int(loraData[i]));
-            Serial.print(",");
+
+#if REPORTING_MODE > 0
+  Serial.println("LoRa packet recieved");
+#endif 
+
+      if(currentLoRaCycle_g != (int)loraData[0]){
+        currentLoRaCycle_g = (int)loraData[0];
+
+        #if REPORTING_MODE > 0 
+            Serial.print("PROCESSING Rx: ");
+            for(byte i=0;i<LoRa_BUFFER;i++){
+              Serial.print(int(loraData[i]));
+              Serial.print(",");
+            }
+            Serial.println(" ");
+        #endif
+
+        switch(loraData[1])  {
+          case REQUESTTYPE_REPORT:{
+            compileReport();
           }
-          Serial.println(" ");
-      #endif
-
-      rssi_g = radio.getRSSI();
-
-      switch(loraData[1])  {
-        case REQUESTTYPE_REPORT:{
-          compileReport();
+          break;
+          default:
+            #if REPORTING_MODE > 0
+              Serial.println("UNKOWN REQUEST TYPE : "+String(loraData[1]));
+            #endif 
+          break;
         }
-        break;
-        default:
-              #if REPORTING_MODE > 0
-                Serial.println("UNKOWN REQUEST TYPE : "+String(loraData[1]));
-              #endif 
-        break;
       }
-
+      #if REPORTING_MODE > 0
+      else Serial.println("matching LoRa cycle numbers ");
+      #endif
     }
     #if REPORTING_MODE > 0
     else{  
@@ -131,24 +138,32 @@
     }
     #endif
   }
+  
 
   void compileReport(){
-        //REPORT:        cycle[0] | report-type[1] | peripheral_id[2] | rssi recieved from controller[3] | Battery (Raw 1024) [4,5] | sensor data[6...LoRa_BUFFER]
 
-    loraData[0]=currentCycle_g ++;
+    #if REPORTING_MODE > 0
+       Serial.println("Compiling report...");
+    #endif
+
+    //REPORT:        cycle[0] | report-type[1] | peripheral_id[2] | rssi recieved from controller[3] | Battery (Raw 1024) [4,5] | sensor data[6...LoRa_BUFFER]
+    currentLoRaCycle_g ++;
+    loraData[0]=currentLoRaCycle_g;
     loraData[1]=RETURNTYPE_REPORT; // see LORA MESSAGE TYPE in config.h
     loraData[2]=PeripheralID_g;
-    loraData[3]=abs(rssi_g); //Last RSSI reading (from Controller to Peripheral)
+    loraData[3]=abs(radio.getRSSI()); //Last RSSI reading (from Controller to Peripheral)
     loraData[4]=1; 
     loraData[5]=2;
 
-    //Replace with function call to sensor-type-specific module
+    
     loraData[6]=6; // Report Length: length includes this marker, so 1 if rest of report is blank.
-    loraData[7]=77;
-    loraData[8]=88;
-    loraData[9]=99;
-    loraData[10]=0;
-    loraData[11]=111;
+    
+    //Replace with function call to eg sensor-type-specific module
+    loraData[7]='a';
+    loraData[8]='b';
+    loraData[9]='c';
+    loraData[10]='d';
+    loraData[11]='e';
 
     loraTx();
   }
@@ -163,8 +178,10 @@
       delay(100);
     }
 
+    // transmit data
     int SX1262state = radio.transmit(loraData, LoRa_BUFFER);
 
+    // check for errors
     #if REPORTING_MODE > 0
       if (SX1262state == RADIOLIB_ERR_NONE) {// the packet was successfully transmitted
         Serial.println("TX success. Datarate: "+ String(radio.getDataRate()) + "bps");
